@@ -1,0 +1,231 @@
+head	1.1;
+access;
+symbols;
+locks; strict;
+comment	@ * @;
+
+
+1.1
+date	2016.11.28.23.31.18;	author o1-sangha;	state Exp;
+branches;
+next	;
+
+
+desc
+@Checking in user.c
+@
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#include "user.h"
+
+PCB *pcb; //making instance of rcb
+RCB *rcb;
+
+systemClock *OssClock;
+int pcbID = 0;
+int clockID = 0;
+int rcbID = 0;
+int msgID = 0;
+
+int main(int argc, char *argv[])
+{
+	signal(SIGALRM, TimeHandler); // getting is alarm is activated
+	signal(SIGQUIT,INThandler); //Handels SIGQUIT
+	signal(SIGINT, INThandler);  // Catching crtl^c
+	signal(SIGUSR1, sigDie); //Checking if This process needs to die
+	signal(SIGUSR2, sigDie2);
+	
+	int pcbLocation = atoi(argv[0]); // making key for access 
+	pcbID = atoi(argv[1]);
+	clockID = atoi(argv[2]);
+	rcbID = atoi(argv[3]);
+	msgID = atoi(argv[4]);
+	
+	AttachToMem();
+	
+	REQ msg;
+	msg.request = -1;
+	msg.sender = pcbLocation;
+	msg.userPid = getpid();
+	msg.typ = 1;
+	
+	int bound = random_number(0,10000000); //bound for the release or request for resource 
+
+	// printf("User %d| pid %d | valid: %d\n", pcb[pcbLocation].userPid,pcb[pcbLocation].userPid,pcb[pcbLocation].valid);
+	int startTime = OssClock->second; //Using this to keep track of at while second user started while loop
+	                                  //This way I can give the user at least 1 second to run before random chance of dying
+	int checkTime = OssClock->nanoSec; //This is used to check randtime between 0 - 250 nanoSec to see if the user can randomly die
+	
+	int reqRelchance = 0; //random number that will decide to release or request resource
+	
+	while(1)
+	{
+		if((reqRelchance = random_number(0,bound)) == bound)
+		{
+			int chance = fast_rand()%1000;
+			
+			if(chance < 500) //50 % chance to reuqest
+			{
+				msg.request = 1; //User is requesting a resource
+				msg.release = 0;
+				if((msgsnd(msgID, &msg, sizeof(REQ), 0)) == -1)
+				{
+					perror("ERROR -- user msgsnd");
+					releaseMem();
+					exit(1);
+				}
+			}
+			else // chance to release 
+			{
+				msg.request = 2;  //user is releasing a resource
+				msg.release = 0;
+				if((msgsnd(msgID, &msg, sizeof(REQ), 0)) == -1)
+				{
+					perror("ERROR -- user msgsnd");
+					releaseMem();
+					exit(1);
+				}
+			}
+		}
+		
+		if(OssClock->nanoSec >= (checkTime+random_number(100,250))) 
+		{
+			if(randDeath(checkTime,startTime,pcbLocation) == 0)
+			{
+				msg.request = 0;
+				msg.release = 1;
+				if((msgsnd(msgID, &msg, sizeof(REQ), 0)) == -1)
+				{
+					perror("ERROR -- user msgsnd");
+					releaseMem();
+					exit(1);
+				}
+				releaseMem();
+				while(1){};
+			}
+			else
+				checkTime = OssClock->nanoSec;
+		}
+	}
+	pcb[pcbLocation].valid = 0;
+
+	releaseMem();
+	exit(0);
+	
+	return 0;
+}
+void INThandler(int sig)
+{ 
+  signal(sig, SIG_IGN); // ignoring any signal passed to the INThandler
+  fprintf(stderr, "\nCtrl^C Called, Process Exiting\n");
+  releaseMem();
+  kill(getpid(), SIGKILL);
+}
+void TimeHandler(int sig)
+{
+  releaseMem();
+  //shmctl(shmid, IPC_RMID, NULL); //mark shared memory for deletion
+  fprintf(stderr, "\nOut of Time, Process %d Exiting\n", getpid());
+  kill(getpid(), SIGKILL);
+  //exit(0);
+}
+
+void sigDie(int sig)
+{ 
+	// printf("Exiting pid: %d\n", getpid());
+	releaseMem();
+	exit(0);
+}
+void sigDie2(int sig)
+{
+	printf("Yes!\n");
+}
+void AttachToMem() //this function just attacheds all the id's to their memory location
+{
+	/* Attaching to the shared memory for OssClock The OSS CLOCK */
+	OssClock = (systemClock*)shmat(clockID, NULL, 0);
+	if(OssClock->nanoSec == (int)-1) // Now we attach the segment to our data space.
+	{
+		releaseMem();
+		perror("Shmat error in Main OssClock");
+		exit(1);
+	}
+	
+	/* Attaching to the shared memory for the PCB*/
+	pcb = (PCB*)shmat(pcbID, NULL, 0);
+	if((void*)pcb == (void*)-1)
+	{
+		perror("shmat child pcb");
+		releaseMem();
+		exit(1);
+	}
+	
+	rcb = (RCB*)shmat(rcbID, NULL, 0);
+	if((void*)rcb ==(void*)-1)
+	{
+		perror("ERROR User shmat rcb");
+		exit(1);
+	}
+	
+}
+int randDeath(int checkTime, int startTime,int pcbLocation) //This funciton figures out if the user needs to die
+{
+	if (startTime < OssClock->second)
+	{
+		int chance = (fast_rand()%100);
+		if (chance < 30) // 30% chance of the process exiting
+		{
+			// printf("User %d Terminating | At the chance of %d\n", pcb[pcbLocation].userPid, chance);
+			return 0;
+		}
+		else //returning 1 if the user is not dying
+			return 1;
+	}
+	else //if a second has not passed then the user does not need to die
+		return 1;
+
+}
+int random_number(int min_num, int max_num)
+{
+	  int randNum = min_num;
+	  int result =0,low_num=0,hi_num=0;
+	  if(min_num < max_num)
+	  {
+		low_num=min_num;
+		hi_num=max_num+1;
+	  }
+	  else
+	  {
+		low_num=max_num+1;
+		hi_num=min_num;
+	  }
+	  // srand(time(NULL) - (getpid()));
+	  result = (getpid()*fast_rand()%(hi_num-low_num))+low_num;
+	  return result;
+}
+
+void releaseMem()
+{
+	if((shmctl(pcbID , IPC_RMID, NULL)) == -1) //detach from shared memory
+	{
+		perror("Error in shmdt in Parent");
+	}
+	if((shmctl(clockID, IPC_RMID, NULL)) == -1)//mark shared memory for deletion
+	{ 
+		printf("Error in shmclt"); 
+	}
+	/*if((shmctl(rcbID, IPC_RMID, NULL)) == -1)//mark shared memory for deletion
+	{ 
+		printf("Error in shmclt child rcbID"); 
+	}
+		
+	if ((msgctl(dieMsgID, IPC_RMID, NULL) == -1))
+	{
+		perror("Erorr in msgctl ");
+	}	*/
+}@
