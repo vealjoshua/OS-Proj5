@@ -1,9 +1,5 @@
 Joshua Veal-Briscoe
 
-I could not finish this program. I have the base set up. I could not finish the releasing resources and deadlock.
-
-I somehow broke my oss.c implemeintg recieving resources
-
 run ./Memclean if anything goes wrong it kill all users and oss and releases all my memory
 
 -----commands-----
